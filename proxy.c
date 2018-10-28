@@ -30,18 +30,19 @@ void clienterror(int fd, char *cause, char *errnum,
                  char *shortmsg, char *longmsg);
 int parse_uri(char *uri, char *hostname, char *pathname, int *port);
 void handle_request(int connfd);
-
-void make_request(void);
-
-
+void read_requesthdrs(rio_t *rp);
 
 
 int main(int argc, char *argv[])
 {
     int listenfd, connfd; /* listen on sockfd, let new connection on new_sockfd */
+
     char hostname[MAXLINE], port[MAXLINE];
+
     socklen_t clientlen;
+
     pthread_t tid;
+
     struct sockaddr_storage clientaddr;
 
     /* Check command line args number */
@@ -49,6 +50,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
     }
+
     printf("%s\n%s\nCreate TCP socket\n", user_agent_hdr, argv[1]);
 
 
@@ -67,8 +69,6 @@ int main(int argc, char *argv[])
         printf("Accepted connection from (%s, %s)\n", hostname, port);
 
         Pthread_create(&tid, NULL, handle_request, connfd);
-
-
     }
 }
 
@@ -77,33 +77,38 @@ void handle_request(int connfd) {
     rio_t rio_server;
 
     size_t totalByteCount = 0;
-    ssize_t n;
-    int port = 0;
-    int serverfd;
-    char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], sport[MAXLINE],
-            method[16], version[16], uri[MAXLINE], leadLine[MAXLINE];
 
-    Rio_readinitb(&rio_client, connfd);
+    ssize_t n;
+
+    int port = 0;
+
+    int serverfd;
+
+    char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], strport[MAXLINE],
+            method[16], version[16], uri[MAXLINE], leadLine[MAXLINE];
 
     path[0] = '/';
 
     // handle first line, extract uri
-    int stageCounter = 0;
+    int stage_counter = 0;
     char *token;
 
-
+    Rio_readinitb(&rio_client, connfd);
     n = Rio_readlineb(&rio_client, buf, MAXLINE);
 
+
     Rio_writen(connfd, buf, (size_t)n); /* writes the n bytes */
+
 
     // tokenize the url to send the path to parse_uri
     token = strtok(buf, " ");
 
     printf("TOKEN: %s", token);
+
     while (token != NULL) {
-        switch (stageCounter++)
+        switch (stage_counter++)
         {
-            case 0:
+            case 0:;
                 strcpy(method, token);
                 break;
             case 1:
@@ -121,10 +126,10 @@ void handle_request(int connfd) {
 
     printf("token: %s, hostname: %s, path: %s, port: %d\n", token, hostname, path, port);
 
-    sprintf(sport, "%d", port);
-    printf("string port: %s\n", sport);
+    sprintf(strport, "%d", port);
+    printf("string port: %s\n", strport);
 
-    if ((serverfd = open_clientfd("beej.us", "80")) < 0)
+    if ((serverfd = open_clientfd(hostname, strport)) < 0)
     {
         Close(connfd);
     }
@@ -161,6 +166,19 @@ void handle_request(int connfd) {
     Close(connfd);
 }
 
+void read_requesthdrs(rio_t *rp)
+{
+    char buf[MAXLINE];
+
+    Rio_readlineb(rp, buf, MAXLINE);
+    printf("%s", buf);
+    while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
+        Rio_readlineb(rp, buf, MAXLINE);
+        printf("%s", buf);
+    }
+    return;
+}
+/* $end read_requesthdrs */
 
 int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 {
@@ -182,7 +200,7 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     hostname[len] = '\0';
 
     /* Extract the port number */
-    *port = 80; /* default */
+    *port = 80;
     if (*hostend == ':')
         *port = atoi(hostend + 1);
 
