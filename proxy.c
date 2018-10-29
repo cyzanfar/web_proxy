@@ -25,6 +25,8 @@
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
+static const char *connection_hdr = "Connection: close\r\n";
+static const char *proxy_connection_hdr = "Proxy-Connection: close\r\n\r\n";
 
 void clienterror(int fd, char *cause, char *errnum,
                  char *shortmsg, char *longmsg);
@@ -87,23 +89,30 @@ void handle_request(int connfd) {
     char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], strport[MAXLINE],
             method[16], version[16], uri[MAXLINE], leadLine[MAXLINE];
 
+    memset(buf, 0, sizeof(buf));
+
     path[0] = '/';
 
     // handle first line, extract uri
     int stage_counter = 0;
     char *token;
 
+    /* Associating file descriptor with a read buffer */
     Rio_readinitb(&rio_client, connfd);
-    n = Rio_readlineb(&rio_client, buf, MAXLINE);
 
 
-    Rio_writen(connfd, buf, (size_t)n); /* writes the n bytes */
+    Rio_readlineb(&rio_client, buf, MAXLINE);
+
+    /* TODO not sure we need this */
+    /*Rio_writen(connfd, buf, (size_t)n);*/
+    /* writes the n bytes */
 
 
-    // tokenize the url to send the path to parse_uri
+
+    /* extract the method i.e GET */
     token = strtok(buf, " ");
 
-    printf("TOKEN: %s", token);
+    /* this just assigns each part of the leadline to the corresponding variable (method, uri, version) */
 
     while (token != NULL) {
         switch (stage_counter++)
@@ -120,17 +129,32 @@ void handle_request(int connfd) {
             case 2:
                 strcpy(version, token);
                 break;
+            default:
+                break;
+
         }
         token = strtok(NULL, " ");
     }
 
-    printf("token: %s, hostname: %s, path: %s, port: %d\n", token, hostname, path, port);
+    /*read_requesthdrs(&rio_client);*/
+    if (strcasecmp(method, "GET")) {
+        clienterror(connfd, method, "501", "Not Implemented",
+                    "Ming does not implement this method");
+        return;
+    }
 
+    printf("method: %s, hostname: %s, path: %s, port: %d\n", method, hostname, path, port);
+
+    /* convert the int port into a string */
     sprintf(strport, "%d", port);
-    printf("string port: %s\n", strport);
 
-    if ((serverfd = open_clientfd(hostname, strport)) < 0)
+    /* let's try to connect to the server */
+
+    printf("HOSTNAME: %s, PORT: %s\n", hostname, strport);
+
+    if ((serverfd = Open_clientfd(hostname, strport)) < 0)
     {
+        printf("CLOSING FILE DESCRIPTOR\n");
         Close(connfd);
     }
 
@@ -140,8 +164,10 @@ void handle_request(int connfd) {
     /* Write the initial header to the server */
     sprintf(leadLine, "%s %s %s", method, path, version);
 
-    /* writes to the fd leadline i.e GET / HTTP/1.0 */
+    /* writes to the fd leadline i.e GET / HTTP/1.1 */
     Rio_writen(serverfd, leadLine, strlen(leadLine));
+
+    /* TODO here need to add the static vars to the file descriptor */
 
     /* reads line by line the header */
     while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
@@ -224,6 +250,7 @@ void clienterror(int fd, char *cause, char *errnum,
 {
     char buf[MAXLINE], body[MAXBUF];
 
+    printf("IN CLIENT ERROR\n");
     /* Build the HTTP response body */
     sprintf(body, "<html><title>Tiny Error</title>");
     sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
@@ -234,6 +261,7 @@ void clienterror(int fd, char *cause, char *errnum,
     /* Print the HTTP response */
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
     Rio_writen(fd, buf, strlen(buf));
+    printf("111111\n");
     sprintf(buf, "Content-type: text/html\r\n");
     Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
