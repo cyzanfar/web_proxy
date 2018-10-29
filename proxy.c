@@ -25,6 +25,8 @@
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
+static const char *connection_hdr = "Connection: close\r\n";
+static const char *proxy_connection_hdr = "Proxy-Connection: close\r\n\r\n";
 
 void clienterror(int fd, char *cause, char *errnum,
                  char *shortmsg, char *longmsg);
@@ -61,6 +63,8 @@ int main(int argc, char *argv[])
     printf("server: waiting for connections...\n");
     while (1) {
         clientlen = sizeof(clientaddr);
+
+        /*connfd = Malloc(sizeof(int));*/
 
         connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
 
@@ -124,6 +128,8 @@ void handle_request(int connfd) {
         token = strtok(NULL, " ");
     }
 
+    read_requesthdrs(&rio_client);
+
     printf("token: %s, hostname: %s, path: %s, port: %d\n", token, hostname, path, port);
 
     sprintf(strport, "%d", port);
@@ -150,7 +156,7 @@ void handle_request(int connfd) {
         Rio_writen(serverfd, buf, n);
     }
 
-    /* write en of header */
+    /* write end of header */
     Rio_writen(serverfd, "\r\n", 2);
 
     printf("\nRESPOND: \n%s", leadLine);
