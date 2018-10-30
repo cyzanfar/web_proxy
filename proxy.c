@@ -11,10 +11,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include "csapp.h"
-
-/* Recommended max cache and object sizes */
-#define MAX_CACHE_SIZE 1049000
-#define MAX_OBJECT_SIZE 102400
+#include "cache.h"
 
 #define BACKLOG 10
 
@@ -22,6 +19,8 @@
 #define	MAXLINE	 8192  /* Max text line length */
 #define MAXBUF   8192  /* Max I/O buffer size */
 #define LISTENQ  1024  /* Second argument to listen() */
+
+
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "%sUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -33,6 +32,11 @@ void clienterror(int fd, char *cause, char *errnum,
 int parse_uri(char *uri, char *hostname, char *pathname, int *port);
 void handle_request(int connfd);
 void read_requesthdrs(rio_t *rp, char*);
+void *thread_handler(int fd);
+void set_write_lock();
+void rel_write_lock();
+void set_read_lock();
+void rel_read_lock();
 
 
 int main(int argc, char *argv[])
@@ -42,8 +46,6 @@ int main(int argc, char *argv[])
     char hostname[MAXLINE], port[MAXLINE];
 
     socklen_t clientlen;
-
-    pthread_t tid;
 
     struct sockaddr_storage clientaddr;
 
@@ -59,6 +61,8 @@ int main(int argc, char *argv[])
     /* create TCP socket, bind and listen*/
     listenfd = Open_listenfd(argv[1]);
 
+    /* init the cache for all threads */
+    cache_init();
 
     printf("server: waiting for connections...\n");
     while (1) {
@@ -70,26 +74,39 @@ int main(int argc, char *argv[])
 
         printf("Accepted connection from (%s, %s)\n", hostname, port);
 
-        Pthread_create(&tid, NULL, handle_request, connfd);
+        thread_handler(connfd);
     }
+    return 0;
+}
+
+void *thread_handler(int fd){
+    pthread_t tid;
+
+    printf("Creating new thread handler\n");
+
+    Pthread_create(&tid, NULL, handle_request, fd);
 }
 
 void handle_request(int connfd) {
-    rio_t rio_client;
-    rio_t rio_server;
+    rio_t rio_client, rio_server;
+
+    cnode_t *node;
 
     size_t totalByteCount = 0;
 
-    ssize_t n;
+    ssize_t line;
+
+    int cache_hit = 0;
 
     int port = 0;
 
     int serverfd;
 
-    char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], strport[MAXLINE],
+    char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], strport[MAXLINE], body[MAX_OBJECT_SIZE],
             method[16], version[16], uri[MAXLINE], leadLine[MAXLINE], request_header[MAXLINE];
 
-//    memset(buf, 0, sizeof(buf));
+    memset(buf, 0, sizeof(buf));
+    memset(body, 0, sizeof(body));
 
     path[0] = '/';
 
@@ -97,9 +114,8 @@ void handle_request(int connfd) {
     int stage_counter = 0;
     char *token;
 
-
     /* TODO not sure we need this */
-    Rio_writen(connfd, buf, (size_t)n);
+//    Rio_writen(connfd, buf, (size_t)n);
     /* writes the n bytes */
 
     /* Associating file descriptor with a read buffer */
@@ -108,21 +124,22 @@ void handle_request(int connfd) {
     /* Read first line into buffer */
     Rio_readlineb(&rio_client, buf, MAXLINE);
 
+    /* return if buffer is empty */
+    if (strcmp(buf, "") == 0)
+        return;
 
     /* extract the method i.e GET */
     token = strtok(buf, " ");
+
     /* this just assigns each part of the leadline to the corresponding variable (method, uri, version) */
-    
     while (token != NULL) {
         switch (stage_counter++)
         {
             case 0:
                 strcpy(method, token);
-                printf("METHOD: %s\n", method);
                 break;
             case 1:
                 strcpy(uri, token);
-                printf("URI: %s\n", uri);
                 if (parse_uri(token, hostname, path+1, &port) == -1) {
                     Close(connfd);
                 }
@@ -137,13 +154,11 @@ void handle_request(int connfd) {
 
     read_requesthdrs(&rio_client, request_header);
 
-    printf("HEADER: %s\n", request_header);
-
-
-    printf("method: %s\n", method);
     if (strcasecmp(method, "GET")) {
+        printf("METHOD: %s\n", method);
+        /* TODO figure out wtf is going on */
         clienterror(connfd, method, "501", "Not Implemented",
-                    "Ming does not implement this method");
+                    "Tiny does not implement this method");
         return;
     }
 
@@ -159,9 +174,34 @@ void handle_request(int connfd) {
 
     printf("HOSTNAME: %s, PORT: %s\n", hostname, strport);
 
+
+    /* Set read and write to locks */
+    set_read_lock();
+
+
+    /* Critcal reading section begin */
+    Cache_check();
+    if ((node = match(hostname, port, path)) != NULL) {
+        printf("Item in Cache\n");
+
+        delete(node);
+        enqueue(node);
+        Rio_writen(connfd, node->payload, node->size);
+        cache_hit = 1;
+    }
+
+    rel_read_lock();
+
+
+    if (cache_hit == 1) {
+        printf("Cached item returned\n");
+        return;
+    }
+
+    printf("Item not in Cache...\n");
+
     if ((serverfd = Open_clientfd(hostname, strport)) < 0)
     {
-        printf("CLOSING FILE DESCRIPTOR\n");
         Close(connfd);
     }
 
@@ -171,25 +211,41 @@ void handle_request(int connfd) {
     /* writes to the fd leadline i.e GET / HTTP/1.0 */
     Rio_writen(serverfd, leadLine, strlen(leadLine));
 
-
-    /* reads line by line the header */
-//    while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
-//          buf[0] != '\r' && buf[0] != '\n') {
-//        printf("buffer: %s\n", buf);
-//        Rio_writen(serverfd, buf, n);
-//    }
-
+    /* write the actual header */
     Rio_writen(serverfd, request_header, strlen(request_header));
-    /* write en of header */
+
+    /* write end of header */
     Rio_writen(serverfd, "\r\n", 2);
 
-    printf("\nRESPOND: \n%s", leadLine);
+
 
     /* Read response from server */
-    while((n = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {
-        printf("buffer1: %s\n", buf);
-        Rio_writen(connfd, buf, n);
-        totalByteCount += n;
+    while((line = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {
+        totalByteCount += line;
+
+        if (totalByteCount <= MAX_OBJECT_SIZE) {
+            strcat(body, buf);
+            Rio_writen(connfd, buf, line);
+        }
+    }
+
+    if (totalByteCount <= MAX_OBJECT_SIZE) {
+        node = new(hostname, port, path, body, totalByteCount);
+
+        set_write_lock();
+        Cache_check();
+
+        while (cache_load + totalByteCount > MAX_CACHE_SIZE) {
+            printf("Evicting the Cache\n");
+            dequeue();
+        }
+        enqueue(node);
+        printf("Cache load: %d bytes\n", cache_load);
+        printf("Cache size: %d \n", cache_count);
+
+
+        Cache_check();
+        rel_write_lock();
     }
 
     Close(serverfd);
@@ -220,7 +276,6 @@ void read_requesthdrs(rio_t *rp, char* header)
 
     return;
 }
-/* $end read_requesthdrs */
 
 int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 {
@@ -259,7 +314,31 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     return 0;
 }
 
+void set_write_lock() {
+    P(&write_lock);
+}
 
+void rel_write_lock() {
+    V(&write_lock);
+}
+
+void set_read_lock() {
+    P(&read_lock);
+    read_count++;
+    if (read_count == 1) {
+        set_write_lock();
+    }
+    V(&read_lock);
+}
+
+void rel_read_lock() {
+    P(&read_lock);
+    read_count--;
+    if (read_count == 0) {
+        rel_write_lock();
+    }
+    V(&read_lock);
+}
 
 void clienterror(int fd, char *cause, char *errnum,
                  char *shortmsg, char *longmsg)

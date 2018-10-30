@@ -23,4 +23,6 @@ add_executable(hw2_handout
         nop-server.py
         port-for-user.pl
         proxy.c
-        README)
+        cache.c
+        cache.h
+        README cache.c cache.h)
