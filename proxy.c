@@ -24,15 +24,15 @@
 #define LISTENQ  1024  /* Second argument to listen() */
 
 /* You won't lose style points for including this long line in your code */
-static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-static const char *connection_hdr = "Connection: close\r\n";
-static const char *proxy_connection_hdr = "Proxy-Connection: close\r\n\r\n";
+static const char *user_agent_hdr = "%sUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
+static const char *connection_hdr = "%sConnection: close\r\n";
+static const char *proxy_connection_hdr = "%sProxy-Connection: close\r\n\r\n";
 
 void clienterror(int fd, char *cause, char *errnum,
                  char *shortmsg, char *longmsg);
 int parse_uri(char *uri, char *hostname, char *pathname, int *port);
 void handle_request(int connfd);
-void read_requesthdrs(rio_t *rp);
+void read_requesthdrs(rio_t *rp, char*);
 
 
 int main(int argc, char *argv[])
@@ -87,9 +87,9 @@ void handle_request(int connfd) {
     int serverfd;
 
     char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE], strport[MAXLINE],
-            method[16], version[16], uri[MAXLINE], leadLine[MAXLINE];
+            method[16], version[16], uri[MAXLINE], leadLine[MAXLINE], request_header[MAXLINE];
 
-    memset(buf, 0, sizeof(buf));
+//    memset(buf, 0, sizeof(buf));
 
     path[0] = '/';
 
@@ -97,51 +97,58 @@ void handle_request(int connfd) {
     int stage_counter = 0;
     char *token;
 
+
+    /* TODO not sure we need this */
+    Rio_writen(connfd, buf, (size_t)n);
+    /* writes the n bytes */
+
     /* Associating file descriptor with a read buffer */
     Rio_readinitb(&rio_client, connfd);
 
-
+    /* Read first line into buffer */
     Rio_readlineb(&rio_client, buf, MAXLINE);
-
-    /* TODO not sure we need this */
-    /*Rio_writen(connfd, buf, (size_t)n);*/
-    /* writes the n bytes */
-
 
 
     /* extract the method i.e GET */
     token = strtok(buf, " ");
-
     /* this just assigns each part of the leadline to the corresponding variable (method, uri, version) */
-
+    
     while (token != NULL) {
         switch (stage_counter++)
         {
-            case 0:;
+            case 0:
                 strcpy(method, token);
+                printf("METHOD: %s\n", method);
                 break;
             case 1:
                 strcpy(uri, token);
+                printf("URI: %s\n", uri);
                 if (parse_uri(token, hostname, path+1, &port) == -1) {
                     Close(connfd);
                 }
                 break;
             case 2:
-                strcpy(version, token);
+                strcpy(version, "HTTP/1.0");
                 break;
-            default:
-                break;
-
         }
         token = strtok(NULL, " ");
     }
 
-    /*read_requesthdrs(&rio_client);*/
+
+    read_requesthdrs(&rio_client, request_header);
+
+    printf("HEADER: %s\n", request_header);
+
+
+    printf("method: %s\n", method);
     if (strcasecmp(method, "GET")) {
         clienterror(connfd, method, "501", "Not Implemented",
                     "Ming does not implement this method");
         return;
     }
+
+    /* Write the initial header to the server */
+    sprintf(leadLine, "%s %s %s\r\n", method, path, version);
 
     printf("method: %s, hostname: %s, path: %s, port: %d\n", method, hostname, path, port);
 
@@ -161,21 +168,18 @@ void handle_request(int connfd) {
     /* associates the file descriptor with the read buffer */
     Rio_readinitb(&rio_server, serverfd);
 
-    /* Write the initial header to the server */
-    sprintf(leadLine, "%s %s %s", method, path, version);
-
-    /* writes to the fd leadline i.e GET / HTTP/1.1 */
+    /* writes to the fd leadline i.e GET / HTTP/1.0 */
     Rio_writen(serverfd, leadLine, strlen(leadLine));
 
-    /* TODO here need to add the static vars to the file descriptor */
 
     /* reads line by line the header */
-    while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
-          buf[0] != '\r' && buf[0] != '\n') {
-        printf("buffer: %s\n", buf);
-        Rio_writen(serverfd, buf, n);
-    }
+//    while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
+//          buf[0] != '\r' && buf[0] != '\n') {
+//        printf("buffer: %s\n", buf);
+//        Rio_writen(serverfd, buf, n);
+//    }
 
+    Rio_writen(serverfd, request_header, strlen(request_header));
     /* write en of header */
     Rio_writen(serverfd, "\r\n", 2);
 
@@ -192,16 +196,28 @@ void handle_request(int connfd) {
     Close(connfd);
 }
 
-void read_requesthdrs(rio_t *rp)
+void read_requesthdrs(rio_t *rp, char* header)
 {
     char buf[MAXLINE];
 
     Rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
-    while(strcmp(buf, "\r\n")) {          //line:netp:readhdrs:checkterm
+    while(strcmp(buf, "\r\n")) {
+
+        if (strstr(buf, "User-Agent") != NULL) {
+            sprintf(header, user_agent_hdr, header);
+        }
+        else if(strstr(buf, "Proxy-Connection") != NULL) {
+            sprintf(header, proxy_connection_hdr, header);
+        }
+        else if(strstr(buf, "Connection") != NULL) {
+            sprintf(header, connection_hdr, header);
+        }
+        else {
+            sprintf(header, "%s%s", header, buf);
+        }
         Rio_readlineb(rp, buf, MAXLINE);
-        printf("%s", buf);
     }
+
     return;
 }
 /* $end read_requesthdrs */
