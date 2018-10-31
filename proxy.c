@@ -21,8 +21,8 @@
 #define LISTENQ  1024  /* Second argument to listen() */
 
 
-
 /* You won't lose style points for including this long line in your code */
+/* Set static header content for User-Agent, Connection, and Proxy-Connection */
 static const char *user_agent_hdr = "%sUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 static const char *connection_hdr = "%sConnection: close\r\n";
 static const char *proxy_connection_hdr = "%sProxy-Connection: close\r\n\r\n";
@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
     /* create TCP socket, bind and listen*/
     listenfd = Open_listenfd(argv[1]);
 
-    /* init the cache for all threads */
+    /* Initialize cache for all threads */
     cache_init();
 
     printf("server: waiting for connections...\n");
@@ -76,26 +76,29 @@ int main(int argc, char *argv[])
 
         thread_handler(connfd);
     }
+
     return 0;
 }
 
 void *thread_handler(int fd){
     pthread_t tid;
 
-    printf("Creating new thread handler\n");
+    printf("Creating new thread handler for: %d\n", fd);
 
     Pthread_create(&tid, NULL, handle_request, fd);
 }
 
 void handle_request(int connfd) {
+    /* Client and server IO handlers */
     rio_t rio_client, rio_server;
 
     cnode_t *node;
 
+    /* Line and total cache byte count */
     size_t totalByteCount = 0;
-
     ssize_t line;
 
+    /* Flag to check if cache was hit */
     int cache_hit = 0;
 
     int port = 0;
@@ -124,11 +127,11 @@ void handle_request(int connfd) {
     /* Read first line into buffer */
     Rio_readlineb(&rio_client, buf, MAXLINE);
 
-    /* return if buffer is empty */
+    /* Return if buffer is empty */
     if (strcmp(buf, "") == 0)
         return;
 
-    /* extract the method i.e GET */
+    /* Extract the method i.e GET */
     token = strtok(buf, " ");
 
     /* this just assigns each part of the leadline to the corresponding variable (method, uri, version) */
@@ -151,14 +154,14 @@ void handle_request(int connfd) {
         token = strtok(NULL, " ");
     }
 
-
+    /* Read the request headers */
     read_requesthdrs(&rio_client, request_header);
 
+    /* Check if method is other than GET */
     if (strcasecmp(method, "GET")) {
         printf("METHOD: %s\n", method);
         /* TODO figure out wtf is going on */
-        clienterror(connfd, method, "501", "Not Implemented",
-                    "Tiny does not implement this method");
+        /* clienterror(connfd, method, "501", "Not Implemented", "Method not implemented !"); */
         return;
     }
 
@@ -185,13 +188,12 @@ void handle_request(int connfd) {
         printf("Item in Cache\n");
 
         delete(node);
-        enqueue(node);
+        add_to_deque(node);
         Rio_writen(connfd, node->payload, node->size);
         cache_hit = 1;
     }
 
     rel_read_lock();
-
 
     if (cache_hit == 1) {
         printf("Cached item returned\n");
@@ -235,13 +237,13 @@ void handle_request(int connfd) {
         set_write_lock();
         Cache_check();
 
-        while (cache_load + totalByteCount > MAX_CACHE_SIZE) {
+        while (total_cache_size + totalByteCount > MAX_CACHE_SIZE) {
             printf("Evicting the Cache\n");
-            dequeue();
+            remove_from_deque();
         }
-        enqueue(node);
-        printf("Cache load: %d bytes\n", cache_load);
-        printf("Cache size: %d \n", cache_count);
+        add_to_deque(node);
+        printf("Cache load: %d bytes\n", total_cache_size);
+        printf("Cache size: %d \n", items_in_cache);
 
 
         Cache_check();
