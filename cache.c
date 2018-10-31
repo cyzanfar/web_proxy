@@ -88,7 +88,7 @@ void delete(cnode_t *node) {
     items_in_cache--;
 }
 
-/* Add to queue */
+/* Add to deque */
 void add_to_deque(cnode_t *node) {
     if (items_in_cache == 0) {
         head = node;
@@ -104,7 +104,7 @@ void add_to_deque(cnode_t *node) {
     total_cache_size += node->size;
     items_in_cache++;
 }
-/* Remove from queue */
+/* Remove from deque */
 void remove_from_deque() {
     cnode_t * res;
     if (items_in_cache == 0)
