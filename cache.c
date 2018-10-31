@@ -3,47 +3,73 @@
 //
 
 
-
-
 #include "cache.h"
 
-
+/* Declare head and tail nodes */
 cnode_t *tail;
 cnode_t *head;
-int cache_count;
-volatile size_t cache_load;
+
+/* Define cache count - items in cache */
+int items_in_cache;
+
+/* Define volatile values for concurrency protection */
+volatile size_t total_cache_size;
 volatile int read_count;
+
+/* Define read and write locks */
 sem_t read_lock, write_lock;
 
+/* Construct new node */
+cnode_t *new(char *host, int port, char *path, char *body, size_t size) {
+    cnode_t * res = Malloc(sizeof(cnode_t));
+    res->host = Malloc(strlen(host) + 1);
+    strcpy(res->host, host);
+    res->path = Malloc(strlen(path) + 1);
+    strcpy(res->path, path);
+    res->port = port;
+    res->payload = Malloc(strlen(body) + 1);
+    strcpy(res->payload, body);
+    res->size = size;
 
-int cmp(cnode_t *node, char *host, int port, char *path) {
-    if (strcasecmp(node->host, host))
-        return 0;
-    if (node->port != port)
-        return 0;
-    if (strcasecmp(node->path, path))
-        return 0;
-    return 1;
+    return res;
 }
 
-/*
- */
-/* $begin cache_init */
+/* Define cache initialization function */
 void cache_init() {
     tail = NULL;
     head = NULL;
-    cache_load = 0;
+
+    /* Set total_cache_size, read_count, items_in_cache to 0 */
+    items_in_cache = 0;
     read_count = 0;
-    cache_count = 0;
+    total_cache_size = 0;
+
+    /* Initialize read and write locks */
     Sem_init(&read_lock, 0 , 1);
     Sem_init(&write_lock, 0, 1);
 }
-/* $end cache_init */
 
-/*
- * delete - Delete the given cache node from the list
- */
-/* $begin delete */
+/* Define function to to check for item already in cache */
+/* If item exists, return 1, else return 0 */
+int compare_item(cnode_t *node, char *host, int port, char *path) {
+
+    /* Check if host matches host in memory */
+    if (strcasecmp(node->host, host))
+        return 0;
+
+    /* Check if port matches port in memory */
+    if (node->port != port)
+        return 0;
+
+    /* Check if path matches path in memory*/
+    if (strcasecmp(node->path, path))
+        return 0;
+
+    /* If all three match, return true */
+    return 1;
+}
+
+/* Define delete function */
 void delete(cnode_t *node) {
     if (head == tail) {
         head = NULL;
@@ -58,17 +84,13 @@ void delete(cnode_t *node) {
         (node->prev)->next = node->next;
         (node->next)->prev = node->prev;
     }
-    cache_load -= node->size;
-    cache_count--;
+    total_cache_size -= node->size;
+    items_in_cache--;
 }
-/* $end delete */
 
-/*
- * enqueue - Enqueue the given cache node
- */
-/* $begin enqueue */
-void enqueue(cnode_t *node) {
-    if (cache_count == 0) {
+/* Add to deque */
+void add_to_deque(cnode_t *node) {
+    if (items_in_cache == 0) {
         head = node;
         tail = node;
         node->next = NULL;
@@ -79,20 +101,15 @@ void enqueue(cnode_t *node) {
         node->next = NULL;
         tail = node;
     }
-    cache_load += node->size;
-    cache_count++;
+    total_cache_size += node->size;
+    items_in_cache++;
 }
-/* $end enqueue */
-
-/*
- * dequeue - Dequeue the given cache node
- */
-/* $begin dequeue */
-void dequeue() {
+/* Remove from deque */
+void remove_from_deque() {
     cnode_t * res;
-    if (cache_count == 0)
+    if (items_in_cache == 0)
         return;
-    else if (cache_count == 1) {
+    else if (items_in_cache == 1) {
         res = head;
         head = NULL;
         tail = NULL;
@@ -101,65 +118,33 @@ void dequeue() {
         (head->next)->prev = NULL;
         head = head->next;
     }
-    cache_load -= res->size;
-    cache_count--;
+    total_cache_size -= res->size;
+    items_in_cache--;
     Free(res->host);
     Free(res->path);
     Free(res->payload);
     Free(res);
 }
-/* $end dequeue */
-
-/*
- * new - New node constructor
- * return: the ptr to the node constructed
- */
-/* $begin new */
-cnode_t * new(char *host, int port, char *path, char *body, size_t size) {
-    cnode_t * res = Malloc(sizeof(cnode_t));
-    res->host = Malloc(strlen(host) + 1);
-    strcpy(res->host, host);
-    res->path = Malloc(strlen(path) + 1);
-    strcpy(res->path, path);
-    res->port = port;
-    res->payload = Malloc(strlen(body) + 1);
-    strcpy(res->payload, body);
-    res->size = size;
-    return res;
-}
-/* $end new */
 
 
-/*
- * match - Try to match a node in the cache
- * return: the node matched
- *         NULL on no matching
- */
-/* $begin match */
-cnode_t * match(char *host, int port, char *path) {
+/* Check for match in node */
+cnode_t *match(char *host, int port, char *path) {
     cnode_t * res = tail;
     for (; res != NULL; res = res->prev) {
-        if (cmp(res, host, port, path)) {
+        if (compare_item(res, host, port, path)) {
             return res;
         }
     }
     return NULL;
 }
-/* $end match */
 
-
-/*
- * cache_check - Try the cache
- * return: 0 on error
- *         1 on good
- */
-/* $begin cache_check */
+/* Check cache for item */
 int cache_check() {
     cnode_t * block;
     int count = 0;
-    if (cache_count == 0)
+    if (items_in_cache == 0)
         return 1;
-    if (cache_count == 1) {
+    if (items_in_cache == 1) {
         if (head != tail) {
             printf("When count === 1, head should equal tail\n");
             return 0;
@@ -198,23 +183,18 @@ int cache_check() {
         return 0;
     }
 
-    if (count != cache_count) {
+    if (count != items_in_cache) {
         printf("Cache count error, count = %d, cache_count = %d\n",
-               count, cache_count);
+               count, items_in_cache);
         return 0;
     }
     return 1;
 }
-/* $end cache_check */
 
-
-/*
- * Cache_check - Wrapper for cache_check
- */
-/* $begin Cache_check */
+/* Wrapper function for cache check */
+/* If item exists in cache, exit */
 void Cache_check() {
     if (!cache_check())
         exit(0);
     return;
 }
-/* $end cache_check */

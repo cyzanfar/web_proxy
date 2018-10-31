@@ -7,13 +7,12 @@
 
 #include "csapp.h"
 
+/* Set constants for max cache size (1MB) and object size (100KB) */
 #define MAX_CACHE_SIZE 1098304
 #define MAX_OBJECT_SIZE 102400
 
-
-
-
 /* Cache node struct */
+/* Deque */
 typedef struct cnode {
     char *host;
     char *path;
@@ -24,18 +23,26 @@ typedef struct cnode {
     int port;
 } cnode_t;
 
+/* Declare head and tail nodes */
 extern cnode_t *tail;
 extern cnode_t *head;
-extern int cache_count;
-extern volatile size_t cache_load;
+
+/* Declare cache count - items in cache */
+extern int items_in_cache;
+
+/* Total size of items in cache */
+extern volatile size_t total_cache_size;
 extern volatile int read_count;
+
+/* Semaphores for read and write locks */
 extern sem_t read_lock, write_lock;
 
-int cmp(cnode_t *node, char *host, int port, char *path);
+/* Declare functions for compare, init, adding and removing from deque */
+int compare_item(cnode_t *node, char *host, int port, char *path);
 void cache_init();
 void delete(cnode_t *node);
-void enqueue(cnode_t *node);
-void dequeue();
+void add_to_deque(cnode_t *node);
+void remove_from_deque();
 cnode_t * new(char *host, int port, char *path, char *body, size_t size);
 cnode_t * match(char *host, int port, char *path);
 int cache_check();
