@@ -117,10 +117,6 @@ void handle_request(int connfd) {
     int stage_counter = 0;
     char *token;
 
-    /* TODO not sure we need this */
-//    Rio_writen(connfd, buf, (size_t)n);
-    /* writes the n bytes */
-
     /* Associating file descriptor with a read buffer */
     Rio_readinitb(&rio_client, connfd);
 
@@ -154,37 +150,12 @@ void handle_request(int connfd) {
         token = strtok(NULL, " ");
     }
 
-    /* Read the request headers */
-    read_requesthdrs(&rio_client, request_header);
-
-    /* Check if method is other than GET */
-    if (strcasecmp(method, "GET")) {
-        printf("METHOD: %s\n", method);
-        /* TODO figure out wtf is going on */
-        /* clienterror(connfd, method, "501", "Not Implemented", "Method not implemented !"); */
-        return;
-    }
-
-    /* Write the initial header to the server */
-    sprintf(leadLine, "%s %s %s\r\n", method, path, version);
-
-    printf("method: %s, hostname: %s, path: %s, port: %d\n", method, hostname, path, port);
-
-    /* convert the int port into a string */
-    sprintf(strport, "%d", port);
-
-    /* let's try to connect to the server */
-
-    printf("HOSTNAME: %s, PORT: %s\n", hostname, strport);
-
-
     /* Set read and write to locks */
     set_read_lock();
 
-
-    /* Critcal reading section begin */
     Cache_check();
-    if ((node = match(hostname, port, path)) != NULL) {
+
+    if ((node = elem_match(hostname, port, path)) != NULL) {
         printf("Item in Cache\n");
 
         delete(node);
@@ -202,6 +173,25 @@ void handle_request(int connfd) {
 
     printf("Item not in Cache...\n");
 
+    /* Read the request headers */
+    read_requesthdrs(&rio_client, request_header);
+
+    /* Check if method is other than GET */
+    if (strcasecmp(method, "GET")) {
+        printf("METHOD: %s\n", method);
+        /* TODO figure out wtf is going on */
+        clienterror(connfd, method, "501", "Not Implemented", "Method not implemented !");
+        return;
+    }
+
+    /* Write the initial header to the server */
+    sprintf(leadLine, "%s %s %s\r\n", method, path, version);
+
+    printf("method: %s, hostname: %s, path: %s, port: %d\n", method, hostname, path, port);
+
+    /* convert the int port into a string */
+    sprintf(strport, "%d", port);
+
     if ((serverfd = Open_clientfd(hostname, strport)) < 0)
     {
         Close(connfd);
@@ -218,8 +208,6 @@ void handle_request(int connfd) {
 
     /* write end of header */
     Rio_writen(serverfd, "\r\n", 2);
-
-
 
     /* Read response from server */
     while((line = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {

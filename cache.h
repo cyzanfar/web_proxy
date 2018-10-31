@@ -44,7 +44,7 @@ void delete(cnode_t *node);
 void add_to_deque(cnode_t *node);
 void remove_from_deque();
 cnode_t * new(char *host, int port, char *path, char *body, size_t size);
-cnode_t * match(char *host, int port, char *path);
+cnode_t * elem_match(char *host, int port, char *path);
 int cache_check();
 void Cache_check();
 

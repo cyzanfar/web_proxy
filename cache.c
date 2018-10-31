@@ -128,7 +128,7 @@ void remove_from_deque() {
 
 
 /* Check for match in node */
-cnode_t *match(char *host, int port, char *path) {
+cnode_t *elem_match(char *host, int port, char *path) {
     cnode_t * res = tail;
     for (; res != NULL; res = res->prev) {
         if (compare_item(res, host, port, path)) {
